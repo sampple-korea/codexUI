@@ -84,6 +84,13 @@
           </template>
         </ContentHeader>
 
+        <div class="runtime-status" role="status" aria-live="polite">
+          <span class="runtime-status-chip">Default Model: {{ selectedModelId || 'gpt-5.4 (preferred)' }}</span>
+          <span class="runtime-status-chip">Fast Mode: {{ selectedReasoningEffort || 'minimal' }}</span>
+          <span class="runtime-status-chip">Tool events visible in chat</span>
+          <span class="runtime-status-chip">Sandbox: danger-full-access</span>
+        </div>
+
         <section class="content-body">
           <template v-if="isSkillsRoute">
             <SkillsHub @skills-changed="onSkillsChanged" />
@@ -688,6 +695,14 @@ async function submitFirstMessageForNewThread(
 
 .content-root {
   @apply h-full min-h-0 w-full flex flex-col overflow-y-hidden overflow-x-visible bg-white;
+}
+
+.runtime-status {
+  @apply flex flex-wrap items-center gap-2 border-b border-zinc-200 bg-zinc-50/80 px-3 py-2;
+}
+
+.runtime-status-chip {
+  @apply rounded-full border border-zinc-300 bg-zinc-100 px-2.5 py-0.5 text-[11px] font-medium text-zinc-700;
 }
 
 .sidebar-thread-controls-host {

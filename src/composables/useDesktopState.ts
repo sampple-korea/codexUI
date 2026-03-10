@@ -11,6 +11,7 @@ import {
   getThreadGroups,
   getThreadMessages,
   getWorkspaceRootsState,
+  setDefaultModel,
   setWorkspaceRootsState,
   getThreadTitleCache,
   persistThreadTitle,
@@ -48,6 +49,8 @@ const EVENT_SYNC_DEBOUNCE_MS = 220
 const AUTO_REFRESH_INTERVAL_MS = 4000
 const REASONING_EFFORT_OPTIONS: ReasoningEffort[] = ['none', 'minimal', 'low', 'medium', 'high', 'xhigh']
 const GLOBAL_SERVER_REQUEST_SCOPE = '__global__'
+const PREFERRED_DEFAULT_MODEL_ID = 'gpt-5.4'
+const PREFERRED_DEFAULT_REASONING_EFFORT: ReasoningEffort = 'minimal'
 
 function loadReadStateMap(): Record<string, string> {
   if (typeof window === 'undefined') return {}
@@ -627,7 +630,7 @@ export function useDesktopState() {
   const eventUnreadByThreadId = ref<Record<string, boolean>>({})
   const availableModelIds = ref<string[]>([])
   const selectedModelId = ref('')
-  const selectedReasoningEffort = ref<ReasoningEffort | ''>('medium')
+  const selectedReasoningEffort = ref<ReasoningEffort | ''>(PREFERRED_DEFAULT_REASONING_EFFORT)
   const readStateByThreadId = ref<Record<string, string>>(loadReadStateMap())
   const scrollStateByThreadId = ref<Record<string, ThreadScrollState>>(loadThreadScrollStateMap())
   const projectOrder = ref<string[]>(loadProjectOrder())
@@ -750,7 +753,12 @@ export function useDesktopState() {
 
       const hasSelectedModel = selectedModelId.value.length > 0 && modelIds.includes(selectedModelId.value)
       if (!hasSelectedModel) {
-        if (currentConfig.model && modelIds.includes(currentConfig.model)) {
+        if (modelIds.includes(PREFERRED_DEFAULT_MODEL_ID)) {
+          selectedModelId.value = PREFERRED_DEFAULT_MODEL_ID
+          if (!currentConfig.model) {
+            void setDefaultModel(PREFERRED_DEFAULT_MODEL_ID).catch(() => {})
+          }
+        } else if (currentConfig.model && modelIds.includes(currentConfig.model)) {
           selectedModelId.value = currentConfig.model
         } else if (modelIds.length > 0) {
           selectedModelId.value = modelIds[0]
@@ -764,6 +772,8 @@ export function useDesktopState() {
         REASONING_EFFORT_OPTIONS.includes(currentConfig.reasoningEffort)
       ) {
         selectedReasoningEffort.value = currentConfig.reasoningEffort
+      } else {
+        selectedReasoningEffort.value = PREFERRED_DEFAULT_REASONING_EFFORT
       }
     } catch {
       // Keep chat UI usable even if model metadata is temporarily unavailable.

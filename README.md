@@ -179,6 +179,27 @@ termux-wake-lock
 | Termux install fails | `pkg update && pkg upgrade` then reinstall `nodejs` |
 | Can’t open from other device | Check firewall, bind address, and LAN routing |
 
+### Keep UI/HTML customizations after restart (Android/Termux included)
+
+`codexapp` ships with bundled UI assets, but you can make your own edits persistent across restarts by placing override files in:
+
+```bash
+$CODEX_HOME/web-ui-overrides
+# default when CODEX_HOME is unset: ~/.codex/web-ui-overrides
+```
+
+Behavior:
+
+- Files in this folder are served **before** bundled `dist/` files.
+- `index.html` in this folder overrides the SPA fallback entrypoint.
+- This is useful on Android/Termux when you want chat UI tweaks to survive app/process restarts.
+
+Optional custom location:
+
+```bash
+CODEXUI_OVERRIDE_DIR=/absolute/path/to/overrides npx codexapp
+```
+
 ---
 
 ## 🤝 Contributing

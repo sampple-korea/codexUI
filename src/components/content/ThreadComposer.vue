@@ -265,6 +265,15 @@ type SelectedImage = {
   url: string
 }
 
+type PersistedComposerState = {
+  draft: string
+  selectedSkillPaths: string[]
+  fileAttachments: FileAttachment[]
+}
+
+const COMPOSER_STATE_STORAGE_KEY = 'codexui.threadComposerState.v1'
+const MAX_PERSISTED_COMPOSER_THREADS = 100
+
 const draft = ref('')
 const selectedImages = ref<SelectedImage[]>([])
 const selectedSkills = ref<SkillItem[]>([])
@@ -317,6 +326,79 @@ const canSubmit = computed(() => {
 })
 const isInteractionDisabled = computed(() => props.disabled || !props.activeThreadId)
 
+function loadComposerStateMap(): Record<string, PersistedComposerState> {
+  if (typeof window === 'undefined') return {}
+  try {
+    const raw = window.localStorage.getItem(COMPOSER_STATE_STORAGE_KEY)
+    if (!raw) return {}
+    const parsed = JSON.parse(raw) as Record<string, PersistedComposerState>
+    if (!parsed || typeof parsed !== 'object') return {}
+    return parsed
+  } catch {
+    return {}
+  }
+}
+
+function saveComposerStateMap(map: Record<string, PersistedComposerState>): void {
+  if (typeof window === 'undefined') return
+  window.localStorage.setItem(COMPOSER_STATE_STORAGE_KEY, JSON.stringify(map))
+}
+
+function persistComposerStateForThread(threadId: string): void {
+  const normalizedThreadId = threadId.trim()
+  if (!normalizedThreadId) return
+
+  const map = loadComposerStateMap()
+  const next: PersistedComposerState = {
+    draft: draft.value,
+    selectedSkillPaths: selectedSkills.value.map((skill) => skill.path),
+    fileAttachments: [...fileAttachments.value],
+  }
+  map[normalizedThreadId] = next
+
+  const keys = Object.keys(map)
+  if (keys.length > MAX_PERSISTED_COMPOSER_THREADS) {
+    for (const key of keys.slice(0, keys.length - MAX_PERSISTED_COMPOSER_THREADS)) {
+      delete map[key]
+    }
+  }
+
+  saveComposerStateMap(map)
+}
+
+function restoreComposerStateForThread(threadId: string): void {
+  const normalizedThreadId = threadId.trim()
+  if (!normalizedThreadId) {
+    draft.value = ''
+    selectedSkills.value = []
+    fileAttachments.value = []
+    return
+  }
+
+  const map = loadComposerStateMap()
+  const state = map[normalizedThreadId]
+  if (!state) {
+    draft.value = ''
+    selectedSkills.value = []
+    fileAttachments.value = []
+    return
+  }
+
+  draft.value = typeof state.draft === 'string' ? state.draft : ''
+  const skillByPath = new Map((props.skills ?? []).map((skill) => [skill.path, skill]))
+  selectedSkills.value = (Array.isArray(state.selectedSkillPaths) ? state.selectedSkillPaths : [])
+    .map((path) => skillByPath.get(path))
+    .filter((skill): skill is SkillItem => Boolean(skill))
+  fileAttachments.value = (Array.isArray(state.fileAttachments) ? state.fileAttachments : [])
+    .filter((entry) => entry && typeof entry === 'object')
+    .map((entry) => ({
+      label: typeof entry.label === 'string' ? entry.label : '',
+      path: typeof entry.path === 'string' ? entry.path : '',
+      fsPath: typeof entry.fsPath === 'string' ? entry.fsPath : '',
+    }))
+    .filter((entry) => entry.fsPath.length > 0)
+}
+
 const placeholderText = computed(() =>
   props.activeThreadId ? 'Type a message... (@ for files, / for skills)' : 'Select a thread to send a message',
 )
@@ -335,6 +417,7 @@ function onSubmit(mode: 'steer' | 'queue' = 'steer'): void {
   selectedImages.value = []
   selectedSkills.value = []
   fileAttachments.value = []
+  persistComposerStateForThread(props.activeThreadId)
   isAttachMenuOpen.value = false
   isSlashMenuOpen.value = false
   closeFileMention()
@@ -376,10 +459,12 @@ function removeImage(id: string): void {
 
 function removeSkill(path: string): void {
   selectedSkills.value = selectedSkills.value.filter((s) => s.path !== path)
+  persistComposerStateForThread(props.activeThreadId)
 }
 
 function removeFileAttachment(fsPath: string): void {
   fileAttachments.value = fileAttachments.value.filter((a) => a.fsPath !== fsPath)
+  persistComposerStateForThread(props.activeThreadId)
 }
 
 function addFileAttachment(filePath: string): void {
@@ -388,6 +473,7 @@ function addFileAttachment(filePath: string): void {
   const parts = normalized.split('/').filter(Boolean)
   const label = parts[parts.length - 1] ?? normalized
   fileAttachments.value = [...fileAttachments.value, { label, path: normalized, fsPath: normalized }]
+  persistComposerStateForThread(props.activeThreadId)
 }
 
 function isImageFile(file: File): boolean {
@@ -436,6 +522,7 @@ function onCameraCaptureChange(event: Event): void {
 }
 
 function onInputChange(): void {
+  persistComposerStateForThread(props.activeThreadId)
   const text = draft.value
   if (text === '/') {
     isSlashMenuOpen.value = true
@@ -619,6 +706,7 @@ function onSlashSkillSelect(skill: SkillItem): void {
   }
   draft.value = draft.value.startsWith('/') ? '' : draft.value
   isSlashMenuOpen.value = false
+  persistComposerStateForThread(props.activeThreadId)
   inputRef.value?.focus()
 }
 
@@ -631,6 +719,7 @@ function onSkillDropdownToggle(path: string, checked: boolean): void {
   } else {
     selectedSkills.value = selectedSkills.value.filter((s) => s.path !== path)
   }
+  persistComposerStateForThread(props.activeThreadId)
 }
 
 function onDocumentClick(event: MouseEvent): void {
@@ -655,15 +744,14 @@ onBeforeUnmount(() => {
 
 watch(
   () => props.activeThreadId,
-  () => {
-    draft.value = ''
+  (threadId) => {
     selectedImages.value = []
-    selectedSkills.value = []
-    fileAttachments.value = []
+    restoreComposerStateForThread(threadId)
     isAttachMenuOpen.value = false
     isSlashMenuOpen.value = false
     closeFileMention()
   },
+  { immediate: true },
 )
 
 watch(
@@ -672,6 +760,13 @@ watch(
     if (isFileMentionOpen.value) {
       void queueFileMentionSearch()
     }
+  },
+)
+
+watch(
+  () => props.skills,
+  () => {
+    restoreComposerStateForThread(props.activeThreadId)
   },
 )
 </script>
