@@ -85,7 +85,7 @@ jobs:
           tag_name: v${{ github.run_number }}
           name: "AnyClaw v${{ github.run_number }} (${{ github.ref_name }})"
           body: |
-            🦞 **AnyClaw** — OpenClaw + Codex on Android
+            🦞 **AnyClaw** — OpenClaw +Codex on Android
 
             📱 Install the APK on any ARM64 Android 7.0+ device. No root required.
 
