@@ -1,0 +1,13 @@
+/.gradle/
+/app/build/
+/build/
+/local.properties
+/signing/
+/app/src/main/assets/bootstrap-*.zip
+/app/src/main/assets/server-bundle/dist/
+/app/src/main/assets/server-bundle/dist-cli/
+/app/src/main/assets/server-bundle/package.json
+/app/src/main/assets/server-bundle/package-lock.json
+/app/src/main/assets/server-bundle/bundled-at.txt
+/app/src/main/assets/web/index.html
+/app/src/main/assets/web/assets/

@@ -1,0 +1,164 @@
+#!/usr/bin/env bash
+
+set -euo pipefail
+
+SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
+APP_DIR="$SCRIPT_DIR/app"
+MAIN_DIR="$APP_DIR/src/main"
+BUILD_DIR="$APP_DIR/build"
+OUTPUT_ROOT="$BUILD_DIR/outputs/apk"
+SDK_ROOT="${ANDROID_HOME:-${ANDROID_SDK_ROOT:-/usr/local/lib/android/sdk}}"
+PLATFORM_DIR="${ANDROID_PLATFORM_DIR:-$SDK_ROOT/platforms/android-35}"
+ANDROID_JAR="$PLATFORM_DIR/android.jar"
+
+resolve_build_tools_dir() {
+  if [ -n "${ANDROID_BUILD_TOOLS_DIR:-}" ]; then
+    printf '%s\n' "$ANDROID_BUILD_TOOLS_DIR"
+    return
+  fi
+
+  local preferred_versions=(
+    "36.1.0"
+    "36.0.0"
+    "35.0.1"
+    "35.0.0"
+    "34.0.0"
+  )
+  local version
+  for version in "${preferred_versions[@]}"; do
+    if [ -d "$SDK_ROOT/build-tools/$version" ]; then
+      printf '%s\n' "$SDK_ROOT/build-tools/$version"
+      return
+    fi
+  done
+
+  find "$SDK_ROOT/build-tools" -maxdepth 1 -mindepth 1 -type d | sort -V | tail -1
+}
+
+BUILD_TOOLS_DIR="$(resolve_build_tools_dir)"
+
+require_file() {
+  if [ ! -f "$1" ]; then
+    echo "Missing required file: $1" >&2
+    exit 1
+  fi
+}
+
+require_tool() {
+  if ! command -v "$1" >/dev/null 2>&1; then
+    echo "Required tool not found: $1" >&2
+    exit 1
+  fi
+}
+
+require_file "$ANDROID_JAR"
+require_file "$BUILD_TOOLS_DIR/aapt"
+require_file "$BUILD_TOOLS_DIR/d8"
+require_file "$BUILD_TOOLS_DIR/zipalign"
+require_file "$BUILD_TOOLS_DIR/apksigner"
+require_tool javac
+require_tool keytool
+require_tool zip
+
+build_variant() {
+  local variant="$1"
+  local variant_dir="$BUILD_DIR/intermediates/manual/$variant"
+  local classes_dir="$variant_dir/classes"
+  local dex_dir="$variant_dir/dex"
+  local package_dir="$variant_dir/package"
+  local output_dir="$OUTPUT_ROOT/$variant"
+  local unsigned_apk="$package_dir/app-unsigned.apk"
+  local aligned_apk="$package_dir/app-aligned.apk"
+  local output_apk="$output_dir/app-$variant.apk"
+  local keystore="$BUILD_DIR/debug.keystore"
+
+  rm -rf "$variant_dir" "$output_dir"
+  mkdir -p "$classes_dir" "$dex_dir" "$package_dir" "$output_dir"
+
+  mapfile -t java_sources < <(find "$MAIN_DIR/java" -name '*.java' -print | sort)
+  if [ "${#java_sources[@]}" -eq 0 ]; then
+    echo "No Java sources found under $MAIN_DIR/java" >&2
+    exit 1
+  fi
+
+  javac \
+    --release 8 \
+    -cp "$ANDROID_JAR" \
+    -d "$classes_dir" \
+    "${java_sources[@]}"
+
+  mapfile -t class_files < <(find "$classes_dir" -name '*.class' -print | sort)
+  if [ "${#class_files[@]}" -eq 0 ]; then
+    echo "No compiled classes produced for $variant" >&2
+    exit 1
+  fi
+
+  "$BUILD_TOOLS_DIR/d8" \
+    --lib "$ANDROID_JAR" \
+    --output "$dex_dir" \
+    "${class_files[@]}"
+
+  "$BUILD_TOOLS_DIR/aapt" package \
+    -f \
+    -M "$MAIN_DIR/AndroidManifest.xml" \
+    -A "$MAIN_DIR/assets" \
+    -I "$ANDROID_JAR" \
+    -F "$unsigned_apk"
+
+  (
+    cd "$dex_dir"
+    zip -q -j "$unsigned_apk" classes.dex
+  )
+
+  "$BUILD_TOOLS_DIR/zipalign" -f 4 "$unsigned_apk" "$aligned_apk"
+
+  if [ ! -f "$keystore" ]; then
+    keytool -genkeypair \
+      -keystore "$keystore" \
+      -storepass android \
+      -keypass android \
+      -alias androiddebugkey \
+      -dname "CN=Android Debug,O=Android,C=US" \
+      -keyalg RSA \
+      -keysize 2048 \
+      -validity 10000 >/dev/null 2>&1
+  fi
+
+  "$BUILD_TOOLS_DIR/apksigner" sign \
+    --ks "$keystore" \
+    --ks-pass pass:android \
+    --key-pass pass:android \
+    --ks-key-alias androiddebugkey \
+    --out "$output_apk" \
+    "$aligned_apk"
+
+  "$BUILD_TOOLS_DIR/apksigner" verify "$output_apk" >/dev/null
+  echo "Built $output_apk"
+}
+
+if [ "$#" -eq 0 ]; then
+  echo "Supported tasks: clean, assembleDebug, assembleRelease, tasks"
+  exit 0
+fi
+
+for task in "$@"; do
+  case "$task" in
+    clean)
+      rm -rf "$BUILD_DIR"
+      echo "Cleaned $BUILD_DIR"
+      ;;
+    assembleDebug)
+      build_variant "debug"
+      ;;
+    assembleRelease)
+      build_variant "release"
+      ;;
+    tasks|help|--help|-h)
+      echo "Supported tasks: clean, assembleDebug, assembleRelease"
+      ;;
+    *)
+      echo "Unsupported task: $task" >&2
+      exit 1
+      ;;
+  esac
+done
