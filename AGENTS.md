@@ -6,7 +6,7 @@
 - Do not push to any remote unless the user explicitly asks to push to a remote.
 
 ## Merge to local main flow for worktree:
-
+ 
 1. In the worktree, commit changes and create a branch.
    - `git add -A && git commit -m "<message>"`
    - `git switch -c <your-branch>`
