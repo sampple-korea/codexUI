@@ -1,5 +1,7 @@
 import { fileURLToPath } from 'node:url'
 import { dirname, extname, isAbsolute, join } from 'node:path'
+import { existsSync } from 'node:fs'
+import { homedir } from 'node:os'
 import type { Server as HttpServer, IncomingMessage } from 'node:http'
 import express, { type Express } from 'express'
 import { createCodexBridgeMiddleware } from './codexAppServerBridge.js'
@@ -8,6 +10,19 @@ import { WebSocketServer, type WebSocket } from 'ws'
 
 const __dirname = dirname(fileURLToPath(import.meta.url))
 const distDir = join(__dirname, '..', 'dist')
+
+function getCodexHomeDir(): string {
+  const codexHome = process.env.CODEX_HOME?.trim()
+  return codexHome && codexHome.length > 0 ? codexHome : join(homedir(), '.codex')
+}
+
+function resolveUserOverrideDir(): string {
+  const fromEnv = process.env.CODEXUI_OVERRIDE_DIR?.trim()
+  if (fromEnv && fromEnv.length > 0) {
+    return fromEnv
+  }
+  return join(getCodexHomeDir(), 'web-ui-overrides')
+}
 
 export type ServerOptions = {
   password?: string
@@ -47,6 +62,8 @@ export function createServer(options: ServerOptions = {}): ServerInstance {
   const app = express()
   const bridge = createCodexBridgeMiddleware()
   const authSession = options.password ? createAuthSession(options.password) : null
+  const userOverrideDir = resolveUserOverrideDir()
+  const hasUserOverrides = existsSync(userOverrideDir)
 
   // 1. Auth middleware (if password is set)
   if (authSession) {
@@ -79,11 +96,22 @@ export function createServer(options: ServerOptions = {}): ServerInstance {
     })
   })
 
-  // 4. Static files from Vue build
+  // 4. Optional user overrides from persistent storage.
+  // Files in this folder shadow bundled dist assets and survive restarts.
+  if (hasUserOverrides) {
+    app.use(express.static(userOverrideDir))
+  }
+
+  // 5. Static files from Vue build
   app.use(express.static(distDir))
 
-  // 5. SPA fallback
+  // 6. SPA fallback
   app.use((_req, res) => {
+    const userIndex = join(userOverrideDir, 'index.html')
+    if (hasUserOverrides && existsSync(userIndex)) {
+      res.sendFile(userIndex)
+      return
+    }
     res.sendFile(join(distDir, 'index.html'))
   })
 
