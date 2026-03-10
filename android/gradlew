@@ -8,9 +8,34 @@ MAIN_DIR="$APP_DIR/src/main"
 BUILD_DIR="$APP_DIR/build"
 OUTPUT_ROOT="$BUILD_DIR/outputs/apk"
 SDK_ROOT="${ANDROID_HOME:-${ANDROID_SDK_ROOT:-/usr/local/lib/android/sdk}}"
-BUILD_TOOLS_DIR="${ANDROID_BUILD_TOOLS_DIR:-$(find "$SDK_ROOT/build-tools" -maxdepth 1 -mindepth 1 -type d | sort -V | tail -1)}"
 PLATFORM_DIR="${ANDROID_PLATFORM_DIR:-$SDK_ROOT/platforms/android-35}"
 ANDROID_JAR="$PLATFORM_DIR/android.jar"
+
+resolve_build_tools_dir() {
+  if [ -n "${ANDROID_BUILD_TOOLS_DIR:-}" ]; then
+    printf '%s\n' "$ANDROID_BUILD_TOOLS_DIR"
+    return
+  fi
+
+  local preferred_versions=(
+    "36.1.0"
+    "36.0.0"
+    "35.0.1"
+    "35.0.0"
+    "34.0.0"
+  )
+  local version
+  for version in "${preferred_versions[@]}"; do
+    if [ -d "$SDK_ROOT/build-tools/$version" ]; then
+      printf '%s\n' "$SDK_ROOT/build-tools/$version"
+      return
+    fi
+  done
+
+  find "$SDK_ROOT/build-tools" -maxdepth 1 -mindepth 1 -type d | sort -V | tail -1
+}
+
+BUILD_TOOLS_DIR="$(resolve_build_tools_dir)"
 
 require_file() {
   if [ ! -f "$1" ]; then
@@ -50,16 +75,28 @@ build_variant() {
   rm -rf "$variant_dir" "$output_dir"
   mkdir -p "$classes_dir" "$dex_dir" "$package_dir" "$output_dir"
 
+  mapfile -t java_sources < <(find "$MAIN_DIR/java" -name '*.java' -print | sort)
+  if [ "${#java_sources[@]}" -eq 0 ]; then
+    echo "No Java sources found under $MAIN_DIR/java" >&2
+    exit 1
+  fi
+
   javac \
     --release 8 \
     -cp "$ANDROID_JAR" \
     -d "$classes_dir" \
-    $(find "$MAIN_DIR/java" -name '*.java' | sort)
+    "${java_sources[@]}"
+
+  mapfile -t class_files < <(find "$classes_dir" -name '*.class' -print | sort)
+  if [ "${#class_files[@]}" -eq 0 ]; then
+    echo "No compiled classes produced for $variant" >&2
+    exit 1
+  fi
 
   "$BUILD_TOOLS_DIR/d8" \
     --lib "$ANDROID_JAR" \
     --output "$dex_dir" \
-    $(find "$classes_dir" -name '*.class' | sort)
+    "${class_files[@]}"
 
   "$BUILD_TOOLS_DIR/aapt" package \
     -f \
